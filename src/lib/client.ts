@@ -30,7 +30,6 @@ const defaultConfig: GoPTSClientConfig = {
 
 export class GoPTSClient {
     private config: GoPTSClientConfig
-    private debugging = false;
     private ws: WebSocket;
     private handler: ChannelHandlerStore = {};
 
@@ -159,7 +158,7 @@ export class GoPTSClient {
     }
 
     private debug(description: string, ...data) {
-        if (!this.debugging) return;
+        if (!this.config.debugging) return;
         console.info("[WS_REALTIME_DEBUG]", description, ...data);
     }
 
