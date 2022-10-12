@@ -12,11 +12,12 @@ interface ChannelHandlerStore {
     [key: string]: MessageHandlerFn[]
 }
 
-interface GoPTSClientConfig {
+export interface GoPTSClientConfig {
     socket?: WebSocket
     url?: string
     retryDelay?: number
     exponentialRetryBackoff?: boolean
+    debugging?: boolean
 }
 
 const defaultConfig: GoPTSClientConfig = {
@@ -24,6 +25,7 @@ const defaultConfig: GoPTSClientConfig = {
     url: `${window.location.protocol === "https:" ? `wss://` : `ws://`}${window.location.host}`,
     retryDelay: 5000,
     exponentialRetryBackoff: true,
+    debugging: false,
 };
 
 export class GoPTSClient {
