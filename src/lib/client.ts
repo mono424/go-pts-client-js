@@ -1,5 +1,6 @@
 const PAGE_LOADED = new Date();
 
+// eslint-disable-next-line no-explicit-any
 type MessageHandlerFn = (payload: any) => void;
 
 const RealtimeMessageTypes = {
@@ -12,6 +13,11 @@ interface ChannelHandlerStore {
     [key: string]: MessageHandlerFn[]
 }
 
+export interface IncommingMessage {
+    channel: string
+    payload: any
+}
+
 export interface GoPTSClientConfig {
     socket?: WebSocket
     url?: string
@@ -21,7 +27,7 @@ export interface GoPTSClientConfig {
 }
 
 const defaultConfig: GoPTSClientConfig = {
-    socket: null,
+    socket: undefined,
     url: `${window.location.protocol === "https:" ? `wss://` : `ws://`}${window.location.host}`,
     retryDelay: 5000,
     exponentialRetryBackoff: true,
@@ -30,7 +36,7 @@ const defaultConfig: GoPTSClientConfig = {
 
 export class GoPTSClient {
     private config: GoPTSClientConfig
-    private ws: WebSocket;
+    private ws?: WebSocket;
     private handler: ChannelHandlerStore = {};
 
     constructor(config: GoPTSClientConfig = {}) {
@@ -41,7 +47,7 @@ export class GoPTSClient {
     }
 
     public connect(): Promise<void> {
-        return this._connect(this.config.retryDelay)
+        return this._connect(this.config.retryDelay!)
     }
 
     private _connect(retryDelay: number): Promise<void> {
@@ -51,11 +57,11 @@ export class GoPTSClient {
             if (this.config.socket != null) {
                 this.ws = this.config.socket;
             } else {
-                this.ws = new WebSocket(this.config.url);
+                this.ws = new WebSocket(this.config.url!);
             }
 
             this.ws.onmessage = (m) => {
-                const data = JSON.parse(m.data);
+                const data: IncommingMessage = JSON.parse(m.data);
                 this.handleMessage(data);
             };
 
@@ -68,7 +74,7 @@ export class GoPTSClient {
                     return;
                 }
 
-                this.ws = null;
+                this.ws = undefined;
                 setTimeout(
                     () => this._connect(this.config.exponentialRetryBackoff ? retryDelay * 2: retryDelay), // Exponential Backoff
                     retryDelay,
@@ -101,7 +107,7 @@ export class GoPTSClient {
 
     async send(channel: string, { payload = {}, type = RealtimeMessageTypes.RealtimeMessageTypeChannelMessage }) {
         await this.lazyInit();
-        await this.ws.send(
+        await this.ws!.send(
             JSON.stringify({
                 type: type,
                 channel: channel,
@@ -148,7 +154,7 @@ export class GoPTSClient {
         return this.connect();
     }
 
-    private handleMessage({ channel, payload }) {
+    private handleMessage({ channel, payload } : IncommingMessage) {
         this.debug("⚪️️ Received", { channel, payload });
         if (this.handler[channel]) {
             for (const handler of this.handler[channel]) {
@@ -157,7 +163,7 @@ export class GoPTSClient {
         }
     }
 
-    private debug(description: string, ...data) {
+    private debug(description: string, ...data: any[]) {
         if (!this.config.debugging) return;
         console.info("[WS_REALTIME_DEBUG]", description, ...data);
     }
