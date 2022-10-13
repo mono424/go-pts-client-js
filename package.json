@@ -23,7 +23,11 @@
     "type": "git",
     "url": "git+https://github.com/mono424/go-pts-client-js.git"
   },
-  "author": "",
+  "author": {
+    "name" : "Khadim Fall",
+    "email" : "info@khadimfall.com",
+    "url" : "https://khad.im"
+  },
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/mono424/go-pts-client-js/issues"
