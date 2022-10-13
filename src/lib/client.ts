@@ -28,7 +28,7 @@ export interface GoPTSClientConfig {
 
 const defaultConfig: GoPTSClientConfig = {
     socket: undefined,
-    url: `${window.location.protocol === "https:" ? `wss://` : `ws://`}${window.location.host}`,
+    url: undefined,
     retryDelay: 5000,
     exponentialRetryBackoff: true,
     debugging: false,
