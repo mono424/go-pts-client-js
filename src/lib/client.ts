@@ -36,6 +36,7 @@ const defaultConfig: GoPTSClientConfig = {
 
 export class GoPTSClient {
     private config: GoPTSClientConfig
+    private connectingPromise?: Promise<void>;
     private ws?: WebSocket;
     private handler: ChannelHandlerStore = {};
 
@@ -51,58 +52,63 @@ export class GoPTSClient {
     }
 
     private _connect(retryDelay: number): Promise<void> {
-        return new Promise<void>((res) => {
-            let promiseDone = false;
+        if (!this.connectingPromise) {
+            this.connectingPromise = new Promise<void>((res) => {
+                let promiseDone = false;
 
-            if (this.config.socket != null) {
-                this.ws = this.config.socket;
-            } else {
-                this.ws = new WebSocket(this.config.url!);
-            }
-
-            this.ws.onmessage = (m) => {
-                const data: IncommingMessage = JSON.parse(m.data);
-                this.handleMessage(data);
-            };
-
-            this.ws.onclose = () => {
-                this.triggerConnectionStatusEvent(false);
-                this.debug("disconnected");
-                // connection closed, discard old websocket and create a new one after backoff
-                // don't recreate new connection if page has been loaded more than 12 hours ago
-                if (new Date().valueOf() - PAGE_LOADED.valueOf() > 1000 * 60 * 60 * 12) {
-                    return;
+                if (this.config.socket != null) {
+                    this.ws = this.config.socket;
+                } else {
+                    this.ws = new WebSocket(this.config.url!);
                 }
 
-                this.ws = undefined;
-                setTimeout(
-                    () => this._connect(this.config.exponentialRetryBackoff ? retryDelay * 2: retryDelay), // Exponential Backoff
-                    retryDelay,
-                );
-            };
+                this.ws.onmessage = (m) => {
+                    const data: IncommingMessage = JSON.parse(m.data);
+                    this.handleMessage(data);
+                };
 
-            this.ws.onerror = (err) => {
-                this.debug("error", err);
-            };
-            
-            if (this.ws.readyState == this.ws.OPEN) {
-                this.afterConnect();
-                this.triggerConnectionStatusEvent(true);
-                if (!promiseDone) {
-                    promiseDone = true;
-                    res();
-                }
-            } else {
-                this.ws.onopen = () => {
+                this.ws.onclose = () => {
+                    this.triggerConnectionStatusEvent(false);
+                    this.debug("disconnected");
+                    // connection closed, discard old websocket and create a new one after backoff
+                    // don't recreate new connection if page has been loaded more than 12 hours ago
+                    if (new Date().valueOf() - PAGE_LOADED.valueOf() > 1000 * 60 * 60 * 12) {
+                        return;
+                    }
+
+                    this.ws = undefined;
+                    setTimeout(
+                        () => this._connect(this.config.exponentialRetryBackoff ? retryDelay * 2: retryDelay), // Exponential Backoff
+                        retryDelay,
+                    );
+                };
+
+                this.ws.onerror = (err) => {
+                    this.debug("error", err);
+                };
+                
+                if (this.ws.readyState == this.ws.OPEN) {
                     this.afterConnect();
                     this.triggerConnectionStatusEvent(true);
                     if (!promiseDone) {
                         promiseDone = true;
+                        this.connectingPromise = undefined;
                         res();
                     }
-                };
-            }
-        });
+                } else {
+                    this.ws.onopen = () => {
+                        this.afterConnect();
+                        this.triggerConnectionStatusEvent(true);
+                        if (!promiseDone) {
+                            promiseDone = true;
+                            this.connectingPromise = undefined;
+                            res();
+                        }
+                    };
+                }
+            });
+        }
+        return this.connectingPromise!;
     }
 
     async send(channel: string, { payload = {}, type = RealtimeMessageTypes.RealtimeMessageTypeChannelMessage }) {
@@ -149,7 +155,12 @@ export class GoPTSClient {
     }
 
     private async lazyInit() {
-        if (this.ws) return;
+        if (this.connectingPromise) {
+            this.debug("waiting for lazy init");
+            await this.connectingPromise;
+            return this.ws;
+        }
+
         this.debug("lazy init");
         return this.connect();
     }
