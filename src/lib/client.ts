@@ -34,11 +34,16 @@ const defaultConfig: GoPTSClientConfig = {
     debugging: false,
 };
 
+function timeout(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export class GoPTSClient {
     private config: GoPTSClientConfig
     private connectingPromise?: Promise<void>;
     private ws?: WebSocket;
     private handler: ChannelHandlerStore = {};
+    private currentRetryDelay = 0;
 
     constructor(config: GoPTSClientConfig = {}) {
         this.config = {
@@ -47,68 +52,74 @@ export class GoPTSClient {
         }
     }
 
-    public connect(): Promise<void> {
-        return this._connect(this.config.retryDelay!)
-    }
-
-    private _connect(retryDelay: number): Promise<void> {
+    private connect(delay: number = 0, isReconnect: boolean = false): Promise<void> {
         if (!this.connectingPromise) {
-            this.connectingPromise = new Promise<void>((res) => {
+            this.connectingPromise = new Promise<void>(async (res) => {
+                await timeout(delay);
+
                 let promiseDone = false;
+                let newSocket: WebSocket;
 
                 if (this.config.socket != null) {
-                    this.ws = this.config.socket;
+                    newSocket = this.config.socket;
                 } else {
-                    this.ws = new WebSocket(this.config.url!);
+                    newSocket = new WebSocket(this.config.url!);
                 }
 
-                this.ws.onmessage = (m) => {
-                    const data: IncommingMessage = JSON.parse(m.data);
-                    this.handleMessage(data);
-                };
-
-                this.ws.onclose = () => {
-                    this.triggerConnectionStatusEvent(false);
-                    this.debug("disconnected");
-                    // connection closed, discard old websocket and create a new one after backoff
-                    // don't recreate new connection if page has been loaded more than 12 hours ago
-                    if (new Date().valueOf() - PAGE_LOADED.valueOf() > 1000 * 60 * 60 * 12) {
-                        return;
-                    }
-
-                    this.ws = undefined;
-                    setTimeout(
-                        () => this._connect(this.config.exponentialRetryBackoff ? retryDelay * 2: retryDelay), // Exponential Backoff
-                        retryDelay,
-                    );
-                };
-
-                this.ws.onerror = (err) => {
+                newSocket.onerror = (err) => {
                     this.debug("error", err);
                 };
-                
-                if (this.ws.readyState == this.ws.OPEN) {
-                    this.afterConnect();
+
+                const runOnSuccess = () => {
+                    if (promiseDone) return;
+
+                    this.debug("connected");
+                    
+                    promiseDone = true;
+                    this.currentRetryDelay = 0;
+
+                    this.addSocketHandler(newSocket);
+                    this.ws = newSocket;
                     this.triggerConnectionStatusEvent(true);
-                    if (!promiseDone) {
-                        promiseDone = true;
-                        this.connectingPromise = undefined;
-                        res();
+
+                    this.connectingPromise = undefined;
+                    res();
+                    
+                    if (isReconnect) {
+                        this.handleReconnect();
                     }
+                };
+                
+                if (newSocket.readyState == newSocket.OPEN) {
+                    runOnSuccess();
                 } else {
-                    this.ws.onopen = () => {
-                        this.afterConnect();
-                        this.triggerConnectionStatusEvent(true);
-                        if (!promiseDone) {
-                            promiseDone = true;
-                            this.connectingPromise = undefined;
-                            res();
-                        }
-                    };
+                    newSocket.onopen = runOnSuccess;
                 }
             });
         }
         return this.connectingPromise!;
+    }
+
+    private addSocketHandler(socket: WebSocket) {
+        socket.onmessage = (m) => {
+            const data: IncommingMessage = JSON.parse(m.data);
+            this.handleMessage(data);
+        };
+
+        socket.onclose = () => {
+            this.triggerConnectionStatusEvent(false);
+            this.debug("disconnected");
+            this.ws = undefined;
+
+            // connection closed, discard old websocket and create a new one after backoff
+            // don't recreate new connection if page has been loaded more than 12 hours ago
+            if (new Date().valueOf() - PAGE_LOADED.valueOf() > 1000 * 60 * 60 * 12) {
+                return;
+            }
+
+            this.currentRetryDelay = this.config.exponentialRetryBackoff ? this.currentRetryDelay * 2 : this.config.retryDelay!;
+            this.connect(this.currentRetryDelay, true);
+        };
     }
 
     async send(channel: string, { payload = {}, type = RealtimeMessageTypes.RealtimeMessageTypeChannelMessage }) {
@@ -154,15 +165,19 @@ export class GoPTSClient {
         }
     }
 
-    private async lazyInit() {
+    private async lazyInit(): Promise<void> {
+        if (this.ws) {
+            return;
+        }
+
         if (this.connectingPromise) {
             this.debug("waiting for lazy init");
             await this.connectingPromise;
-            return this.ws;
+            return;
         }
 
         this.debug("lazy init");
-        return this.connect();
+        return this.connect(0, false);
     }
 
     private handleMessage({ channel, payload } : IncommingMessage) {
@@ -184,8 +199,8 @@ export class GoPTSClient {
         window.dispatchEvent(event);
     }
 
-    private async afterConnect(): Promise<void> {
-        this.debug("connected");
+    private async handleReconnect(): Promise<void> {
+        this.debug("reconnected");
 
         // Re-Subscribe to all channels
         for (const channel of Object.keys(this.handler)) {
