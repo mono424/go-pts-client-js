@@ -1,5 +1,3 @@
-const PAGE_LOADED = new Date();
-
 // eslint-disable-next-line no-explicit-any
 type MessageHandlerFn = (payload: any) => void;
 
@@ -23,13 +21,15 @@ export interface GoPTSClientConfig {
     url?: string
     retryDelay?: number
     exponentialRetryBackoff?: boolean
+    maxRetryAge?: number,
     debugging?: boolean
 }
 
 const defaultConfig: GoPTSClientConfig = {
     socket: undefined,
     url: undefined,
-    retryDelay: 5000,
+    retryDelay: 5000, // 5 seconds
+    maxRetryAge: 12 * 60 * 60, // 12 hours in seconds
     exponentialRetryBackoff: true,
     debugging: false,
 };
@@ -39,13 +39,15 @@ function timeout(ms: number): Promise<void> {
 }
 
 export class GoPTSClient {
-    private config: GoPTSClientConfig
+    private initTime: Date;
+    private config: GoPTSClientConfig;
     private connectingPromise?: Promise<void>;
     private ws?: WebSocket;
     private handler: ChannelHandlerStore = {};
     private currentRetryDelay = 0;
 
     constructor(config: GoPTSClientConfig = {}) {
+        this.initTime = new Date();
         this.config = {
             ...defaultConfig,
             ...config
@@ -54,7 +56,7 @@ export class GoPTSClient {
 
     private connect(delay: number = 0, isReconnect: boolean = false): Promise<void> {
         if (!this.connectingPromise) {
-            this.connectingPromise = new Promise<void>(async (res) => {
+            this.connectingPromise = new Promise<void>(async (res, rej) => {
                 await timeout(delay);
 
                 let promiseDone = false;
@@ -68,6 +70,10 @@ export class GoPTSClient {
 
                 newSocket.onerror = (err) => {
                     this.debug("error", err);
+                    if (promiseDone) return;
+                    this.connectingPromise = undefined;
+                    rej();
+                    this.retryConnect();
                 };
 
                 const runOnSuccess = () => {
@@ -110,16 +116,18 @@ export class GoPTSClient {
             this.triggerConnectionStatusEvent(false);
             this.debug("disconnected");
             this.ws = undefined;
-
-            // connection closed, discard old websocket and create a new one after backoff
-            // don't recreate new connection if page has been loaded more than 12 hours ago
-            if (new Date().valueOf() - PAGE_LOADED.valueOf() > 1000 * 60 * 60 * 12) {
-                return;
-            }
-
-            this.currentRetryDelay = this.config.exponentialRetryBackoff ? this.currentRetryDelay * 2 : this.config.retryDelay!;
-            this.connect(this.currentRetryDelay, true);
+            this.retryConnect();
         };
+    }
+
+    async retryConnect() {
+        const timeSinceInit = (new Date()).getTime() - this.initTime.getTime();
+        if (this.config.maxRetryAge && timeSinceInit > this.config.maxRetryAge * 1000) {
+            return;
+        }
+
+        this.currentRetryDelay = this.config.exponentialRetryBackoff ? this.currentRetryDelay * 2 : this.config.retryDelay!;
+        this.connect(this.currentRetryDelay, true);
     }
 
     async send(channel: string, { payload = {}, type = RealtimeMessageTypes.RealtimeMessageTypeChannelMessage }) {
