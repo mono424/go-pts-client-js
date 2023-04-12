@@ -39,6 +39,7 @@ function timeout(ms: number): Promise<void> {
 }
 
 export class GoPTSClient {
+    private closed: boolean = false;
     private initTime: Date;
     private config: GoPTSClientConfig;
     private connectingPromise?: Promise<void>;
@@ -55,6 +56,7 @@ export class GoPTSClient {
     }
 
     private connect(delay: number = 0, isReconnect: boolean = false): Promise<void> {
+        if (this.closed) return Promise.reject();
         if (!this.connectingPromise) {
             this.connectingPromise = new Promise<void>(async (res, rej) => {
                 await timeout(delay);
@@ -121,6 +123,8 @@ export class GoPTSClient {
     }
 
     async retryConnect() {
+        if (this.closed) return;
+
         const timeSinceInit = (new Date()).getTime() - this.initTime.getTime();
         if (this.config.maxRetryAge && timeSinceInit > this.config.maxRetryAge * 1000) {
             return;
@@ -217,5 +221,17 @@ export class GoPTSClient {
             });
             this.debug("Re-Subscribed", channel);
         }
+    }
+
+    public async close() {
+        this.debug("closing");
+        this.closed = true;
+        if (this.connectingPromise) {
+            await this.connectingPromise;
+        }
+        if (this.ws) {
+            this.ws.close();
+        }
+        this.debug("closed");
     }
 }
