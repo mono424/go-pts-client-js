@@ -46,6 +46,7 @@ export class GoPTSClient {
     private ws?: WebSocket;
     private handler: ChannelHandlerStore = {};
     private currentRetryDelay = 0;
+    private subscribedChannels: string[] = [];
 
     constructor(config: GoPTSClientConfig = {}) {
         this.initTime = new Date();
@@ -152,6 +153,7 @@ export class GoPTSClient {
         await this.send(channel, {
             type: RealtimeMessageTypes.RealtimeMessageTypeSubscribe,
         });
+        this.subscribedChannels.push(channel);
         this.debug("Subscribed", channel);
     }
 
@@ -163,6 +165,7 @@ export class GoPTSClient {
         await this.send(channel, {
             type: RealtimeMessageTypes.RealtimeMessageTypeUnsubscribe,
         });
+        this.subscribedChannels = this.subscribedChannels.filter((c) => c !== channel);
         this.debug("Unsubscribed", channel);
     }
 
@@ -215,7 +218,7 @@ export class GoPTSClient {
         this.debug("reconnected");
 
         // Re-Subscribe to all channels
-        for (const channel of Object.keys(this.handler)) {
+        for (const channel of this.subscribedChannels) {
             await this.send(channel, {
                 type: RealtimeMessageTypes.RealtimeMessageTypeSubscribe,
             });
